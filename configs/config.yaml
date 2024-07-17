@@ -6,8 +6,9 @@ device: cuda:0
 num_workers: 4
 seed: 1234
 use_wandb: False
+patience: 5
 
-data_dir: data
+data_dir: /content/drive/MyDrive/ColabNotebooks/dl_lecture_competition_pub/data
 
 # Evaluation
-model_path: 
+model_path:

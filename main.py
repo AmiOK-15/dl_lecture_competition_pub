@@ -1,4 +1,5 @@
-import os, sys
+
+import os
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -49,9 +50,20 @@ def run(args: DictConfig):
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
     # ------------------
+    # Learning Rate Scheduler
+    # ------------------
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=2, verbose=True)
+
+    # ------------------
+    #   Early Stopping
+    # ------------------
+    patience = args.patience
+    best_val_loss = float('inf')
+    epochs_without_improvement = 0
+
+    # ------------------
     #   Start training
     # ------------------  
-    max_val_acc = 0
     accuracy = Accuracy(
         task="multiclass", num_classes=train_set.num_classes, top_k=10
     ).to(args.device)
@@ -87,17 +99,30 @@ def run(args: DictConfig):
             val_loss.append(F.cross_entropy(y_pred, y).item())
             val_acc.append(accuracy(y_pred, y).item())
 
-        print(f"Epoch {epoch+1}/{args.epochs} | train loss: {np.mean(train_loss):.3f} | train acc: {np.mean(train_acc):.3f} | val loss: {np.mean(val_loss):.3f} | val acc: {np.mean(val_acc):.3f}")
-        torch.save(model.state_dict(), os.path.join(logdir, "model_last.pt"))
-        if args.use_wandb:
-            wandb.log({"train_loss": np.mean(train_loss), "train_acc": np.mean(train_acc), "val_loss": np.mean(val_loss), "val_acc": np.mean(val_acc)})
+        mean_val_loss = np.mean(val_loss)
+        mean_val_acc = np.mean(val_acc)
+        print(f"Epoch {epoch+1}/{args.epochs} | train loss: {np.mean(train_loss):.3f} | train acc: {np.mean(train_acc):.3f} | val loss: {mean_val_loss:.3f} | val acc: {mean_val_acc:.3f}")
         
-        if np.mean(val_acc) > max_val_acc:
+        torch.save(model.state_dict(), os.path.join(logdir, "model_last.pt"))
+        
+        if args.use_wandb:
+            wandb.log({"train_loss": np.mean(train_loss), "train_acc": np.mean(train_acc), "val_loss": mean_val_loss, "val_acc": mean_val_acc})
+        
+        if mean_val_loss < best_val_loss:
             cprint("New best.", "cyan")
             torch.save(model.state_dict(), os.path.join(logdir, "model_best.pt"))
-            max_val_acc = np.mean(val_acc)
-            
-    
+            best_val_loss = mean_val_loss
+            epochs_without_improvement = 0
+        else:
+            epochs_without_improvement += 1
+        
+        # Step the scheduler
+        scheduler.step(mean_val_loss)
+
+        if epochs_without_improvement >= patience:
+            print("Early stopping triggered.")
+            break
+
     # ----------------------------------
     #  Start evaluation with best model
     # ----------------------------------
